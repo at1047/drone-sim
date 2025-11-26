@@ -27,6 +27,10 @@ params.L = 0.5;
 params.e3 = [0;0;1];
 params.g = -9.81;
 
+% Controller Constants
+params.maxProperAcc = 13;
+params.minVerticalProperAcceleration = -1;
+
 % Initial conditions
 rhat = [0;0;-1];
 
@@ -125,7 +129,7 @@ dp = sp0(4:6);
 
 % X = ddq, ddp, T
 
-f = u_input(t);
+f = u_input(params, t, p, dp);
 
 A = [mq * eye(3), zeros([3,3]), -rhat;
      zeros([3,3]), mp * eye(3), +rhat;
@@ -154,20 +158,77 @@ s1 = [new_q; new_dq];
 
 end
 
-function f = u_input(t)
+% function f = u_input(t)
+% 
+%     thrust_eq = 9.81*1.2;
+% 
+%     if t < 0.2
+%         f = [1;0;thrust_eq];
+%     elseif t > 1 && t < 1.2
+%         f = [-1;0;thrust_eq];
+%     % elseif t < 2.5
+%     %     f = [0.1;0;thrust_eq*0.9];
+%     else
+%         f = [0;0;thrust_eq];
+%     end
+% 
+%     % f = [0.5;0;thrust_eq];
+% 
+% end
 
-    thrust_eq = 9.81*1.2;
+function f = u_input(params, t, p, pdot)
+    m = 1.2;
+    g = 9.81;
 
-    if t < 0.2
-        f = [1;0;thrust_eq];
-    elseif t > 1 && t < 1.2
-        f = [-1;0;thrust_eq];
-    % elseif t < 2.5
-    %     f = [0.1;0;thrust_eq*0.9];
-    else
-        f = [0;0;thrust_eq];
+    pd = desired_position(t);
+    pdot_d = [0;0;0];
+
+    Kp = 1*eye(3);
+    % Kd = 0.2*eye(3);
+    Kd = zeros([3,3]);
+
+    a_d = Kp*(pd - p) + Kd*(pdot_d - pdot) + [0;0;g];
+
+    if norm(a_d) > params.maxProperAcc
+        a_d = a_d * params.maxProperAcc / norm(a_d);
     end
 
-    % f = [0.5;0;thrust_eq];
+    if a_d(3) < params.minVerticalProperAcceleration
+        a_d(3) = params.minVerticalProperAcceleration;
+    end
 
+    if a_d(1) > 0.5
+        a_d(1) = 0.5;
+    end
+
+    if a_d(2) > 0.5
+        a_d(2) = 0.5;
+    end
+
+    % desired roll + pitch
+    % phi_d   = a_d(2) / g;
+    % theta_d = a_d(1) / g;
+
+    % full thrust magnitude
+    T = m*norm(a_d);
+
+    % Rotation matrix from desired orientation
+    % R = eul2rotm([0, theta_d, phi_d]); % yaw = 0 for simplicity
+
+    ax = cross([1;1;1], a_d);
+    ang = atan2(norm(ax), dot([1;1;1], a_d));
+
+    R = axang2rotm([ax; ang]');
+
+    f = R * [0;0;T];   % force in world frame
+end
+
+function pd = desired_position(t)
+    if t < 1
+        pd = [0; 0; 2];     % hover at (0,0)
+    elseif t < 2
+        pd = [1; 0; 2];     % slide to x = 1
+    else
+        pd = [0; 0; 2];     % return to hover
+    end
 end

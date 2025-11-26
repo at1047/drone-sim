@@ -6,17 +6,15 @@ function animate(data, dt)
 %       data(4:6, i) = [x2; y2; z2]
 % dt:   time between frames (seconds)
 
-figure(99);
-
 N = size(data, 2);
 
 % Extract full coordinate ranges
 mins = min(data, [], 2);
 maxs = max(data, [], 2);
-pad = 0.1 * max(maxs - mins) + 3;
+pad = 0.3 * max(maxs - mins);
 
 % ---- Create a TRUE 3D axes ----
-fig = figure;
+fig = figure(99);
 ax = axes('Parent', fig);
 grid(ax, 'on')
 axis(ax, 'equal')
