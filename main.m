@@ -129,7 +129,7 @@ dp = sp0(4:6);
 
 % X = ddq, ddp, T
 
-f = u_input(params, t, p, dp);
+f = u_input(params, t, q, dq);
 
 A = [mq * eye(3), zeros([3,3]), -rhat;
      zeros([3,3]), mp * eye(3), +rhat;
@@ -180,55 +180,50 @@ function f = u_input(params, t, p, pdot)
     m = 1.2;
     g = 9.81;
 
-    pd = desired_position(t);
-    pdot_d = [0;0;0];
+    p_des = desired_position(t);
+    pdot_des = [0;0;0];
 
-    Kp = 1*eye(3);
+    Kp = 0.2*eye(3);
     % Kd = 0.2*eye(3);
     Kd = zeros([3,3]);
 
-    a_d = Kp*(pd - p) + Kd*(pdot_d - pdot) + [0;0;g];
-
-    if norm(a_d) > params.maxProperAcc
-        a_d = a_d * params.maxProperAcc / norm(a_d);
-    end
-
-    if a_d(3) < params.minVerticalProperAcceleration
-        a_d(3) = params.minVerticalProperAcceleration;
-    end
-
-    if a_d(1) > 0.5
-        a_d(1) = 0.5;
-    end
-
-    if a_d(2) > 0.5
-        a_d(2) = 0.5;
-    end
-
-    % desired roll + pitch
-    % phi_d   = a_d(2) / g;
-    % theta_d = a_d(1) / g;
+    a_d = Kp*(p_des - p) + Kd*(pdot_des - pdot) + [0;0;g];
+    
+    F_world = m*a_d;
 
     % full thrust magnitude
     T = m*norm(a_d);
 
     % Rotation matrix from desired orientation
-    % R = eul2rotm([0, theta_d, phi_d]); % yaw = 0 for simplicity
+    z_axis = F_world / norm(F_world);
 
-    ax = cross([1;1;1], a_d);
-    ang = atan2(norm(ax), dot([1;1;1], a_d));
-
-    R = axang2rotm([ax; ang]');
+    % 2. Define a temporary 'up' vector (usually Global Z)
+    % Note: If z_axis is parallel to [0 0 1], use [0 1 0] instead to avoid singularity.
+    temp_up = [0; 0; 1]; 
+    if abs(dot(z_axis, temp_up)) > 0.99
+        temp_up = [0; 1; 0];
+    end
+    
+    % 3. Calculate the Right axis (X-axis) using cross product
+    x_axis = cross(temp_up, z_axis);
+    x_axis = x_axis / norm(x_axis);
+    
+    % 4. Recalculate the true Up axis (Y-axis) to ensure orthogonality
+    y_axis = cross(z_axis, x_axis);
+    
+    % 5. Construct Rotation Matrix
+    % R = [x_axis, y_axis, z_axis]
+    R = [x_axis, y_axis, z_axis];
 
     f = R * [0;0;T];   % force in world frame
 end
 
-function pd = desired_position(t)
+function p_des = desired_position(t)
     if t < 1
-        pd = [0; 0; 2];     % hover at (0,0)
+        p_des = [0; 0; 2];     % hover at (0,0)
     elseif t < 2
-        pd = [1; 0; 2];     % slide to x = 1
+        p_des = [1; 0; 2];     % slide to x = 1
     else
-        pd = [0; 0; 2];     % return to hover
+        p_des = [0; 0; 2];     % return to hover
     end
 end
