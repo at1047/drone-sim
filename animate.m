@@ -27,7 +27,7 @@ zlabel(ax, 'Z')
 
 xlim(ax, [mins(1)-pad, maxs(1)+pad])
 ylim(ax, [mins(2)-pad, maxs(2)+pad])
-zlim(ax, [mins(3)-pad, maxs(3)+pad])
+zlim(ax, [mins(3)-pad-0.5, maxs(3)+pad])
 
 % ---- Initial line ----
 p1 = data(1:3, 1);

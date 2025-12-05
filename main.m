@@ -43,7 +43,7 @@ sp0 = sp_initial;
 % T = params.mp * 9.81;
 
 dt = 0.002;
-t_steps = 0:dt:5;
+t_steps = 0:dt:10;
 
 s_arr = zeros(6, length(t_steps));
 s_arr(:, 1) = s0; % Initialize the first state in the array
@@ -183,7 +183,7 @@ function f = u_input(params, t, p, pdot)
     p_des = desired_position(t);
     pdot_des = [0;0;0];
 
-    Kp = 0.2*eye(3);
+    Kp = 0.5*eye(3);
     % Kd = 0.2*eye(3);
     Kd = zeros([3,3]);
 
@@ -219,9 +219,9 @@ function f = u_input(params, t, p, pdot)
 end
 
 function p_des = desired_position(t)
-    if t < 1
+    if t < 0.5
         p_des = [0; 0; 2];     % hover at (0,0)
-    elseif t < 2
+    elseif t < 1.5
         p_des = [1; 0; 2];     % slide to x = 1
     else
         p_des = [0; 0; 2];     % return to hover
