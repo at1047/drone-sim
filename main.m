@@ -22,14 +22,18 @@ dqp0 = [0;
 
 % Constants
 params.mq = 1;
-params.mp = 0.2;
+params.mp = 0.8;
 params.L = 0.5;
 params.e3 = [0;0;1];
 params.g = -9.81;
 
-% Controller Constants
-params.maxProperAcc = 13;
-params.minVerticalProperAcceleration = -1;
+% Controller & aero Constants
+params.pos_natFreq = 2.0;                 % [rad/s] natural frequency for position loop
+params.pos_damping = 0.7;                 % damping ratio
+params.maxProperAcc = 13;                 % [m/s^2] max proper acceleration
+params.minVerticalProperAcceleration = -1; % [m/s^2] min vertical proper acceleration
+params.linDragCoeffB = [0.1286; 0.1286; 0.1286]; % body-frame linear drag [N/(m/s)]
+params.payloadLinDragCoeffB = [0.5; 0.5; 0.5];    % payload linear drag [N/(m/s)] in world frame
 
 % Initial conditions
 rhat = [0;0;-1];
@@ -127,17 +131,34 @@ dq = s0(4:6);
 p = sp0(1:3);
 dp = sp0(4:6);
 
-% X = ddq, ddp, T
+[f, R_wb] = u_input(params, t, q, dq);
 
-f = u_input(params, t, q, dq);
+% Body-frame linear drag (matches PC-Apps style):
+%   vel_b = R_wb' * v_world
+%   F_drag_b = -diag(linDragCoeffB) * vel_b
+%   then rotate back to world
+v_b = R_wb.' * dq;
+K = diag(params.linDragCoeffB);   % [N/(m/s)]
+F_drag_b = -K * v_b;
+F_drag_w = R_wb * F_drag_b;
+
+% Payload drag in world frame (linear per-axis, like linDragCoeffB)
+Kp_payload = diag(params.payloadLinDragCoeffB);
+F_drag_p = -Kp_payload * dp;
+
+
 
 A = [mq * eye(3), zeros([3,3]), -rhat;
      zeros([3,3]), mp * eye(3), +rhat;
      -rhat.', rhat.', 0];
 
-B = [f + e3 * mq * g;
-     e3 * mp * g;
-     -norm(dp - dq)^2/L];
+% B = [f + e3 * mq * g;
+%      e3 * mp * g;
+%      -norm(dp - dq)^2/L];
+
+B = [ f + F_drag_w + e3 * mq * g;
+      e3 * mp * g + F_drag_p;
+      -norm(dp - dq)^2 / L ];
 
 X = A\B;
 
@@ -176,54 +197,61 @@ end
 % 
 % end
 
-function f = u_input(params, t, p, pdot)
-    m = 1.2;
+function [f, R] = u_input(params, t, p, pdot)
+    % Position controller that mirrors the C++ QuadcopterController::Run:
+    %   - second-order (wn, zeta) position loop -> desired acceleration
+    %   - add gravity to get proper acceleration
+    %   - saturate proper acceleration magnitude and vertical component
+    %   - construct attitude so body-z aligns with thrust direction
+
+    m = params.mq + params.mp;
     g = 9.81;
 
     p_des = desired_position(t);
     pdot_des = [0;0;0];
+    desAcc = [0;0;0];
 
-    Kp = 0.5*eye(3);
-    % Kd = 0.2*eye(3);
-    Kd = zeros([3,3]);
+    wn = params.pos_natFreq;
+    zeta = params.pos_damping;
 
-    a_d = Kp*(p_des - p) + Kd*(pdot_des - pdot) + [0;0;g];
-    
-    F_world = m*a_d;
+    Kp = wn^2 * eye(3);
+    Kd = 2 * zeta * wn * eye(3);
 
-    % full thrust magnitude
-    T = m*norm(a_d);
+    cmdAcc = Kp*(p_des - p) + Kd*(pdot_des - pdot) + desAcc;
+    cmdProperAcc = cmdAcc + [0;0;g];
 
-    % Rotation matrix from desired orientation
-    z_axis = F_world / norm(F_world);
+    % Saturate thrust magnitude (proper acceleration) and minimum vertical proper acc
+    normProperAcc = norm(cmdProperAcc);
+    if normProperAcc > params.maxProperAcc
+        cmdProperAcc = cmdProperAcc * (params.maxProperAcc / normProperAcc);
+        normProperAcc = params.maxProperAcc;
+    end
+    if cmdProperAcc(3) < params.minVerticalProperAcceleration
+        cmdProperAcc(3) = params.minVerticalProperAcceleration;
+        normProperAcc = norm(cmdProperAcc);
+    end
 
-    % 2. Define a temporary 'up' vector (usually Global Z)
-    % Note: If z_axis is parallel to [0 0 1], use [0 1 0] instead to avoid singularity.
-    temp_up = [0; 0; 1]; 
-    if abs(dot(z_axis, temp_up)) > 0.99
+    % Desired thrust direction
+    thrustDir = cmdProperAcc / normProperAcc;
+
+    % Build attitude with body z-axis = thrustDir, yaw = 0
+    temp_up = [0; 0; 1];
+    if abs(dot(thrustDir, temp_up)) > 0.99
         temp_up = [0; 1; 0];
     end
-    
-    % 3. Calculate the Right axis (X-axis) using cross product
-    x_axis = cross(temp_up, z_axis);
-    x_axis = x_axis / norm(x_axis);
-    
-    % 4. Recalculate the true Up axis (Y-axis) to ensure orthogonality
-    y_axis = cross(z_axis, x_axis);
-    
-    % 5. Construct Rotation Matrix
-    % R = [x_axis, y_axis, z_axis]
-    R = [x_axis, y_axis, z_axis];
+    x_axis = cross(temp_up, thrustDir); x_axis = x_axis / norm(x_axis);
+    y_axis = cross(thrustDir, x_axis);
+    R = [x_axis, y_axis, thrustDir];
 
-    f = R * [0;0;T];   % force in world frame
+    % Force in world frame (assumes body thrust along +z_b)
+    T = m * normProperAcc;
+    f = R * [0;0;T];
 end
 
 function p_des = desired_position(t)
     if t < 0.5
         p_des = [0; 0; 2];     % hover at (0,0)
-    elseif t < 1.5
-        p_des = [1; 0; 2];     % slide to x = 1
     else
-        p_des = [0; 0; 2];     % return to hover
+        p_des = [1; 0; 2];     % return to hover
     end
 end
